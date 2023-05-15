@@ -7,7 +7,7 @@ from parseTree import PTNode, ParseTree
 import scanner
 
 
-FOLDER = "simpleJava/"
+FOLDER = "/Users/MBP/Documents/compiler/javacompiler/newCompilerTest/simpleJava/"
 EMPTY = ""
 
 
@@ -377,6 +377,7 @@ def parse(tokenList, typedef, cfg, action=None, goto=None, needLog=False):
 
     # lexStr is the lexical string; token type is int.
     for lexStr, tokenType in tokenList:
+        tokenType = str(tokenType)
         currentState = stateStack[-1]
         while True:
             if action[currentState][tokenType] is None:

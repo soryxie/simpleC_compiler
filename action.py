@@ -52,6 +52,13 @@ class Action:
     @staticmethod
     def loadFromString(cfg, string):
         obj = json.loads(string)
+        '''try:
+            for i in range(len(obj["table"])):
+                obj["table"][i] = {int(k): v for k, v in obj["table"][i].items()}
+                tmp = obj["table"][i]
+                print(tmp)
+        except:
+            pass'''
         resultAction = Action(cfg, obj["stateCount"], table=obj["table"])
         return resultAction
 

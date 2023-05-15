@@ -10,14 +10,14 @@ import Parser
 import sys
 
 
-typedef = TypeDefinition.load("simpleJava/typedef")
-cfg = ContextFreeGrammar.load(typedef, "simpleJava/simpleJavaCFG")
+typedef = TypeDefinition.load("/Users/MBP/Documents/compiler/javacompiler/newCompilerTest/simpleJava/typedef")
+cfg = ContextFreeGrammar.load(typedef, "/Users/MBP/Documents/compiler/javacompiler/newCompilerTest/simpleJava/simpleJavaCFG")
 # action, goto = Parser.genActionGoto(typedef, cfg)
-# action.save('simpleJava/simpleJavaAction')
-# goto.save('simpleJava/simpleJavaGoto')
+# action.save('/Users/MBP/Documents/compiler/javacompiler/newCompilerTest/simpleJava/simpleJavaAction')
+# goto.save('/Users/MBP/Documents/compiler/javacompiler/newCompilerTest/simpleJava/simpleJavaGoto')
 # exit()
-action = Action.load(cfg, "simpleJava/simpleJavaAction")
-goto = Goto.load(cfg, "simpleJava/simpleJavaGoto")
+action = Action.load(cfg, "/Users/MBP/Documents/compiler/javacompiler/newCompilerTest/simpleJava/simpleJavaAction")
+goto = Goto.load(cfg, "/Users/MBP/Documents/compiler/javacompiler/newCompilerTest/simpleJava/simpleJavaGoto")
 par = ParseTreeActionRegister(cfg)
 
 

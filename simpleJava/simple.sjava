@@ -9,8 +9,9 @@ int gcd(int a, int b) {
 }
 
 int coPrime(int a, int b) {
-    int val = gcd(a, b);
-    if (val != 1) {
+    int val[100];
+    val[0] = gcd(a, b);
+    if (val[0] != 1) {
         print("gcd(", a, ", ", b, ") =", val);
     } else {
         print(a, "and", b, "are co-prime!");
