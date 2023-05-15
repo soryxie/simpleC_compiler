@@ -1,34 +1,44 @@
-from collections import deque
 from cfg import ContextFreeGrammar
 from typeDef import TypeDefinition
 from action import Action
 from goto import Goto
-from Ast import ASTNode, AbstractSyntaxTree, ASTActionRegister
+from Ast import ASTNode, AbstractSyntaxTree
 from parseTree import ParseTreeActionRegister
 import scanner
 import Parser
-import sys
 
+# 提前指定好simpleC的全局路径，在vscode下调试会使用到
+path_to_simpleC = "/Users/MBP/Documents/compiler/javacompiler/newCompilerTest/simpleC/"
 
-typedef = TypeDefinition.load("/Users/MBP/Documents/compiler/javacompiler/newCompilerTest/simpleC/typedef")
-cfg = ContextFreeGrammar.load(typedef, "/Users/MBP/Documents/compiler/javacompiler/newCompilerTest/simpleC/CFG")
+typedef = TypeDefinition.load(path_to_simpleC + "typedef")
+cfg = ContextFreeGrammar.load(typedef, path_to_simpleC + "CFG")
+
+# ------------------- 生成新语法的两张表 -------------------
 # action, goto = Parser.genActionGoto(typedef, cfg)
-# action.save('/Users/MBP/Documents/compiler/javacompiler/newCompilerTest/simpleC/simpleCAction')
-# goto.save('/Users/MBP/Documents/compiler/javacompiler/newCompilerTest/simpleC/simpleCGoto')
+# action.save(path_to_simpleC + "simpleCAction")
+# goto.save(path_to_simpleC + "simpleCGoto")
 # exit()
-action = Action.load(cfg, '/Users/MBP/Documents/compiler/javacompiler/newCompilerTest/simpleC/simpleCAction')
-goto = Goto.load(cfg, '/Users/MBP/Documents/compiler/javacompiler/newCompilerTest/simpleC/simpleCGoto')
+
+# ------------------- 读取已经生成的两张表 -------------------
+action = Action.load(cfg, path_to_simpleC + "simpleCAction")
+goto = Goto.load(cfg, path_to_simpleC + "simpleCGoto")
 par = ParseTreeActionRegister(cfg)
 
+# ------------------- 外部调用接口 -------------------
+def create_AST(read_file: str) -> AbstractSyntaxTree:
+    with open(read_file, "r") as f:
+        src = f.read()
+    tokenList = scanner.parse(typedef, src, ['line_comment', 'block_comment', 'space'])
+    pt = Parser.parse(tokenList, typedef, cfg, action, goto)
+    pt.evaluate(par)
+    ast = AbstractSyntaxTree(pt.getRoot().node)
+    return ast
 
-cb_count = -2
-def getNewCodeBlockName():
-    global cb_count
-    cb_count += 1
-    if cb_count == -1:
-        return "_main"
-    return "__CB_%d" % (cb_count)
 
+
+
+
+# --------- 以下均为parser tree 转换到 AST 所需要的语义动作 ---------
 
 @par.production("<语句串> -> <语句串> <语句>")
 def _stmtl0(stmtl, stmtl0, stmt):
@@ -371,14 +381,6 @@ def _continue0(flc, cont, semi):
 def _continue1(flc, brk, semi):
     flc.node = ASTNode("break")
 
-with open("simpleC/test.c", "r") as f:
-    src = f.read()
-tokenList = scanner.parse(typedef, src, ['line_comment', 'block_comment', 'space'])
-#for string, type_id in tokenList:
-#    print(string, typedef.getName(type_id))
-pt = Parser.parse(tokenList, typedef, cfg, action, goto)
-pt.evaluate(par)
-tmp = pt.getRoot()
-ast = AbstractSyntaxTree(pt.getRoot().node)
-
-
+if __name__ == '__main__':
+    ast = create_AST("simpleC/test.c")
+    print(ast)
