@@ -39,6 +39,10 @@ def create_AST(read_file: str) -> AbstractSyntaxTree:
 
 
 # --------- 以下均为parser tree 转换到 AST 所需要的语义动作 ---------
+@par.production("<Start> -> <语句串>")
+def _start(program, stmtl):
+    program.node = ASTNode("start", stmtl.node, actionID="start")
+
 
 @par.production("<语句串> -> <语句串> <语句>")
 def _stmtl0(stmtl, stmtl0, stmt):
@@ -227,6 +231,7 @@ def _funcdec1(funcDec, type_, id_, lp, rp, lcb, stmtl, rcb):
         "funcDec",
         type_.node,
         ASTNode(id_.getContent(), actionID="id_func"),
+        ASTNode('empty_param'), # 专门增加一个空的参数表
         stmtl.node
     )
 
@@ -383,4 +388,4 @@ def _continue1(flc, brk, semi):
 
 if __name__ == '__main__':
     ast = create_AST("simpleC/test.c")
-    print(ast)
+    # print(ast) # 能直接得到字符树
