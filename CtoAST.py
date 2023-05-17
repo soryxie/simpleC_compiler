@@ -39,10 +39,6 @@ def create_AST(read_file: str) -> AbstractSyntaxTree:
 
 
 # --------- 以下均为parser tree 转换到 AST 所需要的语义动作 ---------
-@par.production("<Start> -> <语句串>")
-def _start(program, stmtl):
-    program.node = ASTNode("start", stmtl.node, actionID="start")
-
 
 @par.production("<语句串> -> <语句串> <语句>")
 def _stmtl0(stmtl, stmtl0, stmt):
