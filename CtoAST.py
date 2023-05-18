@@ -110,11 +110,11 @@ def _c35(c3, c30, eq, c4):
 
 @par.production("<e3> -> ++ <e4>")
 def _e00(e0, sp, e1):
-    e0.node = ASTNode("sp", e1.node)  # self plus
+    e0.node = ASTNode("splus", e1.node)  # self plus
 
 @par.production("<e3> -> -- <e4>")
 def _e01(e0, sm, e1):
-    e0.node = ASTNode("sm", e1.node)  # self minus
+    e0.node = ASTNode("sminus", e1.node)  # self minus
 
 @par.production("<e0> -> <e0> + <e1>")
 def _e10(e1, e10, plus, e2):

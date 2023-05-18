@@ -15,9 +15,20 @@ ast = create_AST("simpleC/test.c")
 
 funcbuilder = ASTActionRegister()
 
-# 目前按照单文件编译的格式，只需要一个module，干脆设成全局试试
+'''
+按照这个逻辑，AST遍历也是按后序遍历处理，所以也是一个一个函数处理
+因此，可以使用builder_list 存放所有函数的builder ， 并用一个builder_no表示进行到第几个函数了
+'''
+# 全局module
 module = ir.Module()
 
+# builder 汇总表
+builder_list = [] 
+
+# 局部变量表
+local_var = []
+
+# ----------------------------第一遍扫描-----------------------------------
 def get_llvm_type(type_):
     if type_ == 'int':
         return ir.IntType(32)
@@ -29,326 +40,247 @@ def get_llvm_type(type_):
         print("error type")
         exit()
 
-# @funcbuilder.action("start", index=0)
-# def _program_dec(start, *stmtls): # 传播给下一层节点
-#     module = ir.Module()
-#     for child in stmtls:
-#         child.module = module 
-#     start.module = module
-
-@funcbuilder.action("stmtList", index=0)
-def _stmtl(stmtls, *stmts):
-    if 'builder' in stmtls :
-        # 只有当不具有builder的stmtls才是最外部的   
-        glo_verible = []
-        func = []
-        for child in stmts:
-            if child.var is not None:
-                glo_verible.append(child.var)
-            if child.llvm_func is not None:
-                func.append(child.func)
-
 @funcbuilder.action("funcDec")
 def _funcDecl(func, type_, func_id, defpl, sl):
     # if 'module' not in func:
     #     assert func.module is not None
     funcName = str(func_id.getContent())
     retType = get_llvm_type(type_.getContent())
-    funcType = ir.FunctionType(retType, ())
-    func.llvm_func = ir.Function(module, funcType, funcName)
-    sl.builder = func.llvm_func.append_basic_block(name = funcName+"_stmtl")
+    arg_types = []
+    arg_names = []
+    for arg in defpl.getChilds():
+        attr = arg.getChilds()
+        arg_types.append(get_llvm_type(attr[0].getContent()))
+        arg_names.append(attr[1].getContent())
 
+    # 声明完毕，开始定义函数
+    funcType = ir.FunctionType(retType, tuple(arg_types))
+
+    # 构建基本块和Buidler
+    func.llvm_func = ir.Function(module, funcType, funcName)
+    for arg in func.llvm_func.args:     # 函数参数绑定名称
+        arg.name = arg_names.pop(0)
+
+    primary_block = func.llvm_func.append_basic_block()
+    builder = ir.IRBuilder(primary_block)
+    global builder_list
+    builder_list.append(builder)        # 导入Budiler列表           
+
+    # 创建局部变量表
+    local_var.append({})
 
 
 ast.evaluate(funcbuilder)
 
+# ----------------------------第二遍扫描-----------------------------------
 
-exit()
+# func_block定位
+func_no = 0
+block_no = 0
+
+# builder_now 表示当前处理的第一个函数的builder，后序不断更新
+builder_now = builder_list[0]
+
 aar = ASTActionRegister()
-@aar.action("varDec", index=0)
+
+@aar.action("varDec")
 def _varDec(varDec, type_, idList):
+    # 回到块的起始位置
+    global builder_now, block_no
+    # builder_now.position_at_start(builder_now.function.basic_block[0])
+
     for node in idList.getChilds():
-        # TODO 这里的逻辑是 child0=type child1=idList 下一层孩子才是变量 or 数组
-        # 需要添加对应的变量声明IR 
-        idList.builder.allocat(ir.IntType(32), name=node.getContent())
-     
-        
+        if node.getContent() == 'assign':
+            var_name = node.getChilds()[0].getContent()
+            variable = builder_now.alloca(get_llvm_type(type_.getContent()), var_name)
+            builder_now.store(node.getChilds()[1].value, variable)
+            local_var[func_no][var_name] = builder_now.load(variable)   # 可运算的类型 - load
+        else:
+            var_name = node.getContent()
+            variable = builder_now.alloca(get_llvm_type(type_.getContent()), var_name)
+            local_var[func_no][var_name] = builder_now.load(variable)   # 可运算的类型 - load
 
+    # 相当于一条主干语句的结束，切换到一个新的block
+    new_blk = builder_now.append_basic_block()
+    block_no += 1
+    builder_now.goto_block(new_blk)
 
-@aar.action("assign", index=0)
-def _assign_begin(assg, l, r):
-    # TODO 他出现在 idList 的孩子，要么是当具有初始值，就是assg,
-    # 否则就是id_var
-    # 这里的逻辑是 child0=var child1=expr
-    pass
-
+# 这个函数是指先于子节点执行的assign
+# @aar.action("assign", index=0)
+# def _assign_begin(assg, l, r):
+    # if "dec" in assg:
+    #     l.dec = True
+    #     l.type = assg.type
+    #     l.isArray = assg.isArray
+    #     l.dim = assg.dim
 
 @aar.action("assign")
-def _assign(assg, l, r):
-    assg.cb.addILOC("mov", "ebx", r.var.getOP())
-    assg.cb.addILOC("mov", l.var.getOP(), "ebx")
-    assg.var = l.var
-    '''不懂'''
+def _assign_begin(assg, l, r):
+    if 'value' in l:
+        if isinstance(l.value, ir.LoadInstr):# l.value is None:
+            builder_now.store(r.value, l.value.operands[0])
+        else:
+            builder_now.store(r.value, l.value)
+        assg.value = l.value
+    else:
+        print("l.value not found, wait for defination")
+    # assg.cb.addILOC("mov", "ebx", r.var.getOP())
+    # assg.cb.addILOC("mov", l.var.getOP(), "ebx")
+    # assg.var = l.var
+
+@aar.action("id_var")
+def _id_var(id_):
+    name = id_.getContent()
+
+    # 在全局变量表中查找
+    # for var in module.global_variables:
+    #     if var.name == name:
+    #         id_.var = var
+    #         return
+
+    # 在局部变量表中查找
+    if name in local_var[func_no]:
+        id_.value = local_var[func_no][name]
+        return
+    
+    # 在函数的args中查找
+    for arg in builder_now.function.args:
+        if arg.name == name:
+            id_.value = arg
+            return
+    
+    # 未找到，不做处理
+    print("var %s not found, can't get value" % name)
 
 @aar.action("const")
 def _const(const):
-    '''建立const变量'''
-    val = str(const.getContent())
-    if const.type[0].islower():
-        const.var = ConstValue(getTempVarName(), const.type, val, const.ns)
+    val = const.getContent()
+    if const.type == "int":
+        const.value = ir.Constant(ir.IntType(32), int(val))
+    elif const.type == "double":
+        const.value = ir.Constant(ir.DoubleType(), float(val))
+    elif const.type == "float":
+        const.value = ir.Constant(ir.FloatType(), float(val))
+    elif const.type == "String":
+        val += ", 0" # not sure
+        const.value = ir.Constant.literal_array(val)
     else:
-        if const.type == "String":
-            val += ", 0"
-        const.var = ConstPointer(getTempVarName(), const.type, val, const.ns)
+        print('not implemented type %s' % const.type)
+        assert False
 
 @aar.action("add")
 def _add(add, l, r):
-    '''＋逻辑'''
-    add.cb.addILOC("push", "eax")
-    add.cb.addILOC("mov", "eax", r.var.getOP())
-    add.cb.addILOC("add", "eax", l.var.getOP())
-    add.var = Variable(getTempVarName(), getType(l, r), add.ns)
-    add.cb.addILOC("mov", add.var.getOP(), "eax")
-    add.cb.addILOC("pop", "eax")
+    add.value = builder_now.add(l.value, r.value)
 
 @aar.action("sub")
 def _sub(sub, l, r):
-    sub.cb.addILOC("push", "eax")
-    sub.cb.addILOC("mov", "eax", l.var.getOP())
-    sub.cb.addILOC("sub", "eax", r.var.getOP())
-    sub.var = Variable(getTempVarName(), getType(l, r), sub.ns)
-    sub.cb.addILOC("mov", sub.var.getOP(), "eax")
-    sub.cb.addILOC("pop", "eax")
+    sub.value = builder_now.sub(l.value, r.value)
 
 @aar.action("mul")
 def _mul(mul, l, r):
-    mul.cb.addILOC("push", "eax")
-    mul.cb.addILOC("mov", "eax", l.var.getOP())
-    mul.cb.addILOC("mul", r.var.getOP())
-    mul.var = Variable(getTempVarName(), getType(l, r), mul.ns)
-    mul.cb.addILOC("mov", mul.var.getOP(), "eax")
-    mul.cb.addILOC("pop", "eax")
+    mul.value = builder_now.mul(l.value, r.value)
 
 @aar.action("div")
 def _div(div, l, r):
-    div.cb.addILOC("push", "eax")
-    div.cb.addILOC("push", "ebx")
-    div.cb.addILOC("push", "edx")
-    div.cb.addILOC("xor", "edx", "edx")
-    div.cb.addILOC("mov", "eax", l.var.getOP())
-    div.cb.addILOC("mov", "ebx", r.var.getOP())
-    div.cb.addILOC("div", "ebx")
-    div.var = Variable(getTempVarName(), getType(l, r), div.ns)
-    div.cb.addILOC("mov", div.var.getOP(), "eax")
-    div.cb.addILOC("pop", "edx")
-    div.cb.addILOC("pop", "ebx")
-    div.cb.addILOC("pop", "eax")
+    # TODO assert r.value != 0
+    div.value = builder_now.sdiv(l.value, r.value)
 
 @aar.action("mod")
 def _mod(mod, l, r):
-    mod.cb.addILOC("push", "eax")
-    mod.cb.addILOC("push", "ebx")
-    mod.cb.addILOC("push", "edx")
-    mod.cb.addILOC("xor", "edx", "edx")
-    mod.cb.addILOC("mov", "eax", l.var.getOP())
-    mod.cb.addILOC("mov", "ebx", r.var.getOP())
-    mod.cb.addILOC("div", "ebx")
-    mod.var = Variable(getTempVarName(), getType(l, r), mod.ns)
-    mod.cb.addILOC("mov", mod.var.getOP(), "edx")
-    mod.cb.addILOC("pop", "edx")
-    mod.cb.addILOC("pop", "ebx")
-    mod.cb.addILOC("pop", "eax")
+    # TODO assert r.value != 0
+    mod.value = builder_now.srem(l.value, r.value)
 
-@aar.action("sp")
+@aar.action("splus")
 def _sp(sp, l):
-    sp.cb.addILOC("inc", l.var.getOP())
-    sp.var = l.var
-
-@aar.action("sm")
+    l.value = builder_now.add(l.value, ir.Constant(l.value.type, 1))
+    sp.value = l.value
+    
+@aar.action("sminus")
 def _sm(sm, l):
-    sm.cb.addILOC("dec", l.var.getOP())
-    sm.var = l.var
+    l.value = builder_now.sub(l.value, ir.Constant(l.value.type, 1))
+    sm.value = l.value
 
 @aar.action("iadd")
 def _iadd(iadd, l, r):
-    iadd.cb.addILOC("push", "eax")
-    iadd.cb.addILOC("mov", "eax", l.var.getOP())
-    iadd.cb.addILOC("add", "eax", r.var.getOP())
-    iadd.cb.addILOC("mov", l.var.getOP(), "eax")
-    iadd.cb.addILOC("pop", "eax")
-    iadd.var = l.var
+    l.value = builder_now.add(l.value, r.value)
+    iadd.value = l.value
 
 @aar.action("isub")
 def _isub(isub, l, r):
-    isub.cb.addILOC("push", "eax")
-    isub.cb.addILOC("mov", "eax", l.var.getOP())
-    isub.cb.addILOC("sub", "eax", r.var.getOP())
-    isub.cb.addILOC("mov", l.var.getOP(), "eax")
-    isub.cb.addILOC("pop", "eax")
-    isub.var = l.var
+    l.value = builder_now.sub(l.value, r.value)
+    isub.value = l.value
 
 @aar.action("imul")
 def _imul(imul, l, r):
-    imul.cb.addILOC("push", "eax")
-    imul.cb.addILOC("mov", "eax", l.var.getOP())
-    imul.cb.addILOC("mul", r.var.getOP())
-    imul.cb.addILOC("mov", l.var.getOP(), "eax")
-    imul.cb.addILOC("pop", "eax")
-    imul.var = l.var
+    l.value = builder_now.mul(l.value, r.value)
+    imul.value = l.value
 
 @aar.action("idiv")
 def _idiv(idiv, l, r):
-    idiv.cb.addILOC("push", "eax")
-    idiv.cb.addILOC("push", "ebx")
-    idiv.cb.addILOC("push", "edx")
-    idiv.cb.addILOC("xor", "edx", "edx")
-    idiv.cb.addILOC("mov", "eax", l.var.getOP())
-    idiv.cb.addILOC("mov", "ebx", r.var.getOP())
-    idiv.cb.addILOC("div", "ebx")
-    idiv.cb.addILOC("mov", l.var.getOP(), "eax")
-    idiv.cb.addILOC("pop", "edx")
-    idiv.cb.addILOC("pop", "ebx")
-    idiv.cb.addILOC("pop", "eax")
-    idiv.var = l.var
+    # TODO assert r.value != 0
+    l.value = builder_now.sdiv(l.value, r.value)
+    idiv.value = l.value
 
 @aar.action("imod")
 def _imod(imod, l, r):
-    imod.cb.addILOC("push", "eax")
-    imod.cb.addILOC("push", "ebx")
-    imod.cb.addILOC("push", "edx")
-    imod.cb.addILOC("xor", "edx", "edx")
-    imod.cb.addILOC("mov", "eax", l.var.getOP())
-    imod.cb.addILOC("mov", "ebx", r.var.getOP())
-    imod.cb.addILOC("div", "ebx")
-    imod.cb.addILOC("mov", l.var.getOP(), "edx")
-    imod.cb.addILOC("pop", "edx")
-    imod.cb.addILOC("pop", "ebx")
-    imod.cb.addILOC("pop", "eax")
-    imod.var = l.var
+    # TODO assert r.value != 0
+    l.value = builder_now.srem(l.value, r.value)
+    imod.value = l.value
 
 @aar.action("eq")
 def _eq(eq, l, r):
-    eq.cb.addILOC("push", "eax")
-    eq.cb.addILOC("xor", "eax", "eax")
-    eq.cb.addILOC("push", "ebx")
-    eq.cb.addILOC("mov", "ebx", l.var.getOP())
-    eq.cb.addILOC("cmp", "ebx", r.var.getOP())
-    eq.cb.addILOC("lahf")
-    eq.cb.addILOC("shr", "eax", "14")
-    eq.cb.addILOC("and", "eax", "1")
-    eq.var = Variable(getTempVarName(), "int", eq.ns)
-    eq.cb.addILOC("mov", eq.var.getOP(), "eax")
-    eq.cb.addILOC("pop", "ebx")
-    eq.cb.addILOC("pop", "eax")
+    eq.value = builder_now.icmp_signed('==', l.value, r.value)
 
 @aar.action("ne")
 def _ne(ne, l, r):
-    ne.cb.addILOC("push", "eax")
-    ne.cb.addILOC("xor", "eax", "eax")
-    ne.cb.addILOC("push", "ebx")
-    ne.cb.addILOC("mov", "ebx", l.var.getOP())
-    ne.cb.addILOC("cmp", "ebx", r.var.getOP())
-    ne.cb.addILOC("lahf")
-    ne.cb.addILOC("shr", "eax", "14")
-    ne.cb.addILOC("and", "eax", "1")
-    ne.cb.addILOC("xor", "eax", "1")
-    ne.var = Variable(getTempVarName(), "int", ne.ns)
-    ne.cb.addILOC("mov", ne.var.getOP(), "eax")
-    ne.cb.addILOC("pop", "ebx")
-    ne.cb.addILOC("pop", "eax")
+    ne.value = builder_now.icmp_signed('!=', l.value, r.value)
 
 @aar.action("lt")
 def _lt(lt, l, r):
-    # l < r -> l - r < 0 -> sign = 1
-    lt.cb.addILOC("push", "eax")
-    lt.cb.addILOC("xor", "eax", "eax")
-    lt.cb.addILOC("push", "ebx")
-    lt.cb.addILOC("mov", "ebx", l.var.getOP())
-    lt.cb.addILOC("cmp", "ebx", r.var.getOP())
-    lt.cb.addILOC("lahf")
-    lt.cb.addILOC("shr", "eax", "15")
-    lt.cb.addILOC("and", "eax", "1")
-    lt.var = Variable(getTempVarName(), "int", lt.ns)
-    lt.cb.addILOC("mov", lt.var.getOP(), "eax")
-    lt.cb.addILOC("pop", "ebx")
-    lt.cb.addILOC("pop", "eax")
+    lt.value = builder_now.icmp_signed('<', l.value, r.value)
 
 @aar.action("gt")
 def _gt(gt, l, r):
-    # l > r -> r - l < 0 -> sign = 1
-    gt.cb.addILOC("push", "eax")
-    gt.cb.addILOC("xor", "eax", "eax")
-    gt.cb.addILOC("push", "ebx")
-    gt.cb.addILOC("mov", "ebx", r.var.getOP())
-    gt.cb.addILOC("cmp", "ebx", l.var.getOP())
-    gt.cb.addILOC("lahf")
-    gt.cb.addILOC("shr", "eax", "15")
-    gt.cb.addILOC("and", "eax", "1")
-    gt.var = Variable(getTempVarName(), "int", gt.ns)
-    gt.cb.addILOC("mov", gt.var.getOP(), "eax")
-    gt.cb.addILOC("pop", "ebx")
-    gt.cb.addILOC("pop", "eax")
+    gt.value = builder_now.icmp_signed('>', l.value, r.value)
 
 @aar.action("le")
 def _le(le, l, r):
-    # l <= r -> not l > r
-    le.cb.addILOC("push", "eax")
-    le.cb.addILOC("xor", "eax", "eax")
-    le.cb.addILOC("push", "ebx")
-    le.cb.addILOC("mov", "ebx", r.var.getOP())
-    le.cb.addILOC("cmp", "ebx", l.var.getOP())
-    le.cb.addILOC("lahf")
-    le.cb.addILOC("shr", "eax", "15")
-    le.cb.addILOC("and", "eax", "1")
-    le.cb.addILOC("xor", "eax", "1")  # boolean not
-    le.var = Variable(getTempVarName(), "int", le.ns)
-    le.cb.addILOC("mov", le.var.getOP(), "eax")
-    le.cb.addILOC("pop", "ebx")
-    le.cb.addILOC("pop", "eax")
+    le.value = builder_now.icmp_signed('<=', l.value, r.value)
 
 @aar.action("ge")
 def _ge(ge, l, r):
-    # l >= r -> not l < r
-    ge.cb.addILOC("push", "eax")
-    ge.cb.addILOC("xor", "eax", "eax")
-    ge.cb.addILOC("push", "ebx")
-    ge.cb.addILOC("mov", "ebx", l.var.getOP())
-    ge.cb.addILOC("cmp", "ebx", r.var.getOP())
-    ge.cb.addILOC("lahf")
-    ge.cb.addILOC("shr", "eax", "15")
-    ge.cb.addILOC("and", "eax", "1")
-    ge.cb.addILOC("xor", "eax", "1")  # boolean not
-    ge.var = Variable(getTempVarName(), "int", ge.ns)
-    ge.cb.addILOC("mov", ge.var.getOP(), "eax")
-    ge.cb.addILOC("pop", "ebx")
-    ge.cb.addILOC("pop", "eax")
+    ge.value = builder_now.icmp_signed('>=', l.value, r.value)
 
 @aar.action("not")
 def _not(not_, l):
-    not_.cb.addILOC("push", "ebx")
-    not_.cb.addILOC("mov", "ebx", l.var.getOP())
-    not_.cb.addILOC("xor", "ebx", "1")
-    not_.var = Variable(getTempVarName(), "int", not_.ns)
-    not_.cb.addILOC("mov", not_.var.getOP(), "ebx")
-    not_.cb.addILOC("pop", "ebx")
+    not_.value = builder_now.not_(l)
 
 @aar.action("or")
 def _or(or_, l, r):
-    or_.cb.addILOC("push", "ebx")
-    or_.cb.addILOC("mov", "ebx", l.var.getOP())
-    or_.cb.addILOC("or", "ebx", r.var.getOP())
-    or_.var = Variable(getTempVarName(), "int", or_.ns)
-    or_.cb.addILOC("mov", or_.var.getOP(), "ebx")
-    or_.cb.addILOC("pop", "ebx")
+    or_.value = builder_now.or_(l, r)
 
 @aar.action("and")
 def _and(and_, l, r):
-    and_.cb.addILOC("push", "ebx")
-    and_.cb.addILOC("mov", "ebx", l.var.getOP())
-    and_.cb.addILOC("and", "ebx", r.var.getOP())
-    and_.var = Variable(getTempVarName(), "int", and_.ns)
-    and_.cb.addILOC("mov", and_.var.getOP(), "ebx")
-    and_.cb.addILOC("pop", "ebx")
+    and_.value = builder_now.and_(l, r)
+
+@aar.action("funcDec")
+def _funcDecl(func, type_, func_id, defpl, sl):
+    global func_no, builder_now
+    func_no += 1
+    if func_no < len(builder_list):
+        builder_now = builder_list[func_no]
+    else:
+        print('the last func')
+
+
+ast.evaluate(aar)
+
+print("=== IR ===")
+print(module)
+
+exit()
+
+
 
 @aar.action("ifBlock")
 def _ifBlock(ifb, *childs):

@@ -65,12 +65,11 @@ class AbstractSyntaxTree(Tree):
         if currentNode is None:
             currentNode = self.getRoot()
         actionID = currentNode.getActionIdentifier()
-
         for i, child in enumerate(currentNode.getChilds()):
             if actionID in index and i in index[actionID]:
                 index[actionID][i](currentNode, *currentNode.getChilds())
             self.evaluate(ar, currentNode=child)
-
         if actionID in m:
             m[actionID](currentNode, *currentNode.getChilds())
-        
+
+

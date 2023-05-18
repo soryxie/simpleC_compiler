@@ -2,3 +2,6 @@ out
 __pycache__/*
 in
 .vscode/*
+simpleC/*.py
+example
+*.ll
