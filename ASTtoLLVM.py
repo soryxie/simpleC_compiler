@@ -11,7 +11,7 @@ import scanner
 import Parser
 import sys
 
-ast = create_AST("simpleC/test.c")
+ast = create_AST("simpleC/test_only_op.c")
 
 funcbuilder = ASTActionRegister()
 
@@ -103,16 +103,7 @@ def _varDec(varDec, type_, idList):
     # 相当于一条主干语句的结束，切换到一个新的block
     new_blk = builder_now.append_basic_block()
     block_no += 1
-    builder_now.goto_block(new_blk)
-
-# 这个函数是指先于子节点执行的assign
-# @aar.action("assign", index=0)
-# def _assign_begin(assg, l, r):
-    # if "dec" in assg:
-    #     l.dec = True
-    #     l.type = assg.type
-    #     l.isArray = assg.isArray
-    #     l.dim = assg.dim
+    builder_now.position_at_start(new_blk)
 
 @aar.action("assign")
 def _assign_begin(assg, l, r):
@@ -265,46 +256,57 @@ def _and(and_, l, r):
 
 @aar.action("funcDec")
 def _funcDecl(func, type_, func_id, defpl, sl):
-    global func_no, builder_now
+    # 仅仅作为builder的切换函数
+    global func_no, builder_now, block_no
     func_no += 1
+    block_no = 0
     if func_no < len(builder_list):
         builder_now = builder_list[func_no]
     else:
         print('the last func')
 
+@aar.action("stmtList", index=0)
+def _stmtl(stmtl, *rest):
+    # 仅仅作为block的切换函数
+    global block_no, builder_now
+    block_no += 1
+    new_blk = builder_now.append_basic_block()
+    stmtl.block = builder_now.function.basic_blocks[block_no]
+    builder_now.position_at_end(new_blk)
 
-ast.evaluate(aar)
-
-print("=== IR ===")
-print(module)
-
-exit()
-
-
+@aar.action("ifBlock", index = 0)
+def _ifBlock_prestore(ifb, *childs):
+    ifb.start_block = builder_now.function.basic_blocks[block_no]
 
 @aar.action("ifBlock")
 def _ifBlock(ifb, *childs):
-    # TODO 需要根据结果写if的跳转
-    for i in range(1, len(childs), 2):
-        c0, sl = childs[i - 1], childs[i]
-        ifb.cb.addILOC("if", c0.var, "1", sl.cb, ("cur", "next"))
-    if len(childs) & 1:
-        sl = childs[-1]
-        ifb.cb.addILOC("goto", sl.cb, ("cur", "next"))
+    # 0: eq 1: slist (2: cond, 3: slist)... 4: slist
+    global block_no
+    block_no += 1
+    ifend = builder_now.append_basic_block('if_end_' + ifb.start_block.name)
+
+    builder_now.position_at_end(ifb.start_block)
+
+    if len(childs) == 2:
+        builder_now.cbranch(childs[0].value, childs[1].block, ifend)
+    elif len(childs) == 3:
+        builder_now.cbranch(childs[0].value, childs[1].block, childs[2].block)
+        builder_now.position_at_end(childs[1].block)
+        builder_now.branch(ifend)
+        builder_now.position_at_end(childs[2].block)
+        builder_now.branch(ifend)
     else:
-        ifb.cb.addILOC("goto", ("cur", "next"))
-    ifb.cb.addILOC("seg")
+        assert False # TODO not implement
+        for i in range(0, len(childs), 2):
 
-'''这里不太懂'''
-def updateBreakBlock(cur, childs):
-    for child in childs:
-        child.bb = cur.bb
-        child.run(updateBreakBlock)
+            builder_now.cbranch(childs[i].value, childs[i+1].block, childs[i+2].block)
+            builder_now.position_at_end(childs[i+1].block)
+            builder_now.branch(ifend)
+    builder_now.position_at_end(ifend)
 
-def updateContinueBlock(cur, childs):
-    for child in childs:
-        child.lb = cur.lb
-        child.run(updateContinueBlock)
+ast.evaluate(aar)
+print(module)
+exit()
 
 @aar.action("whileBlock", index=0)
 def _while_0(while_, c0, sl):
@@ -356,24 +358,6 @@ def _break(break_):
 def _continue(continue_):
     # TODO continue的逻辑
     continue_.cb.addILOC("goto", continue_.lb)
-
-
-declaredFunctions = {}
-
-class Function:
-
-    def __init__(self, returnType, name, parameters, sl):
-        self.returnType = returnType
-        self.name = name
-        self.parameters = parameters
-        self.sl = sl
-    
-    def __str__(self):
-        return "%s(%s)" % (self.name, ", ".join("%s %s" % (var.type, var.name) for var in self.parameters))
-
-    def __repr__(self):
-        return repr(str(self))
-
 
 @aar.action("defParam")
 def _defParam(defp, type_, id_):

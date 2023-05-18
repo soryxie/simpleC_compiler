@@ -8,8 +8,6 @@ int binarySearch(int arr, int len, int val) {
         int mid = l + (r - l) / 2;
         if (arr == val) {
             l = r = mid;
-        } else if (arr < val) {
-            l = mid + 1;
         } else {
             r = mid;
         }
