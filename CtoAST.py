@@ -276,7 +276,7 @@ def _ifBlock1(ib, if_, lp, c0, rp, lcb, sl, rcb, else_, ib0):
 
 @par.production("<for初始化> -> <变量声明串>", "<for初始化> -> <变量串>", "<for表达式> -> <c0>")
 def _forinit0(forinit, b):
-    forinit.node = b.node
+    forinit.node = ASTNode("forexpr", b.node, actionID="forexpr")
 
 @par.production("<for初始化> -> ''", "<for表达式> -> ''")
 def _empty(a):

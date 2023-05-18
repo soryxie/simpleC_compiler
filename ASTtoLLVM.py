@@ -85,9 +85,11 @@ aar = ASTActionRegister()
 
 @aar.action("varDec")
 def _varDec(varDec, type_, idList):
-    # 回到块的起始位置
     global builder_now, block_no
-    # builder_now.position_at_start(builder_now.function.basic_block[0])
+    # 相当于一条主干语句的结束，切换到一个新的block
+    new_blk = builder_now.append_basic_block()
+    block_no += 1
+    builder_now.position_at_start(new_blk)
 
     for node in idList.getChilds():
         if node.getContent() == 'assign':
@@ -99,11 +101,6 @@ def _varDec(varDec, type_, idList):
             var_name = node.getContent()
             variable = builder_now.alloca(get_llvm_type(type_.getContent()), var_name)
             local_var[func_no][var_name] = builder_now.load(variable)   # 可运算的类型 - load
-
-    # 相当于一条主干语句的结束，切换到一个新的block
-    new_blk = builder_now.append_basic_block()
-    block_no += 1
-    builder_now.position_at_start(new_blk)
 
 @aar.action("assign")
 def _assign_begin(assg, l, r):
@@ -276,7 +273,11 @@ def _stmtl(stmtl, *rest):
 
 @aar.action("ifBlock", index = 0)
 def _ifBlock_prestore(ifb, *childs):
-    ifb.start_block = builder_now.function.basic_blocks[block_no]
+    global block_no, builder_now
+    block_no += 1
+    new_blk = builder_now.append_basic_block()
+    ifb.start_block = new_blk
+    builder_now.position_at_end(new_blk)
 
 @aar.action("ifBlock")
 def _ifBlock(ifb, *childs):
@@ -304,51 +305,71 @@ def _ifBlock(ifb, *childs):
             builder_now.branch(ifend)
     builder_now.position_at_end(ifend)
 
-ast.evaluate(aar)
-print(module)
-exit()
-
-@aar.action("whileBlock", index=0)
-def _while_0(while_, c0, sl):
-    # TODO 需要根据结果写while的跳转
-    c0.cb = sl.cb
-
-@aar.action("whileBlock", index=1)
-def _while_1(while_, c0, sl):
-    sl.lb = sl.cb
-    sl.run(updateContinueBlock)
-    sl.bb = while_.cb
-    sl.run(updateBreakBlock)
-    sl.cb.addILOC("if", c0.var, "0", (while_.cb, "next"))
+@aar.action("whileBlock", index = 0)
+def _whileBlock_prestore(while_, c0, sl):
+    global block_no, builder_now
+    block_no += 1
+    new_blk = builder_now.append_basic_block()
+    while_.start_block = new_blk
+    builder_now.position_at_end(new_blk)
 
 @aar.action("whileBlock")
 def _while(while_, c0, sl):
-    sl.cb.next = (while_.cb, "next")
-    while_.cb.addILOC("goto", sl.cb)
-    while_.cb.addILOC("seg")
-    sl.cb.addILOC("goto", sl.cb)
+    global block_no
+    block_no += 1
+    while_end = builder_now.append_basic_block('while_end_' + sl.block.name)
+    builder_now.position_at_end(while_.start_block)
+    builder_now.cbranch(c0.value, sl.block, while_end)
+    builder_now.position_at_end(sl.block)
+    builder_now.branch(while_.start_block)
 
-@aar.action("forBlock", index=0)
-def _for_0(for_, init, expr0, stmtl, expr1):
-    # TODO 需要根据结果写for的跳转
-    expr0.cb = stmtl.cb
-    expr1.cb = stmtl.cb
-    stmtl.bb = for_.cb
-    stmtl.run(updateBreakBlock)
-    stmtl.lb = stmtl.cb
-    stmtl.run(updateContinueBlock)
+    builder_now.position_at_end(while_end)
 
-@aar.action("forBlock", index=2)
-def _for_2(for_, init, expr0, stmtl, expr1):
-    stmtl.cb.addILOC("if", expr0.var, "0", (for_.cb, "next"))
+# @aar.action("forBlock", index=0)
+# def _for_prestore(for_, init, expr0, stmtl, expr1):
+#     global block_no, builder_now
+#     block_no += 1
+#     new_blk = builder_now.append_basic_block()
+#     for_.start_block = new_blk
+#     builder_now.position_at_end(new_blk)
+
+@aar.action("forexpr", index = 0) 
+def _forexpr_prestore(forexpr_, expr):
+    global block_no, builder_now
+    block_no += 1
+    new_blk = builder_now.append_basic_block()
+    forexpr_.block = new_blk
+    builder_now.position_at_end(new_blk)
+   
+@aar.action("forexpr") 
+def _forexpr(forexpr_, expr):
+    if 'value' in expr:
+        forexpr_.value = expr.value
 
 @aar.action("forBlock")
 def _for(for_, init, expr0, stmtl, expr1):
-    stmtl.cb.next = (for_.cb, "next")
-    for_.cb.addILOC("goto", stmtl.cb)
-    for_.cb.addILOC("seg")
-    stmtl.cb.addILOC("goto", stmtl.cb)
+    global block_no
+    block_no += 1
+    for_end = builder_now.append_basic_block('for_end_' + stmtl.block.name)
+    builder_now.position_at_end(init.block)
+    builder_now.branch(expr0.block)
+    builder_now.position_at_end(expr0.block)
+    builder_now.cbranch(expr0.value, stmtl.block, for_end)
+    builder_now.position_at_end(stmtl.block)
+    if expr1.getContent() != 'none':
+        builder_now.branch(expr1.block)
+        builder_now.position_at_end(expr1.block)
+        builder_now.branch(expr0.block)
 
+    builder_now.position_at_end(for_end)
+
+
+ast.evaluate(aar)
+print(module)
+
+exit()
+
+'''
 @aar.action("break")
 def _break(break_):
     # TODO break的逻辑
@@ -358,6 +379,7 @@ def _break(break_):
 def _continue(continue_):
     # TODO continue的逻辑
     continue_.cb.addILOC("goto", continue_.lb)
+'''
 
 @aar.action("defParam")
 def _defParam(defp, type_, id_):
