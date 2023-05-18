@@ -305,6 +305,9 @@ def _ifBlock(ifb, *childs):
             builder_now.branch(ifend)
     builder_now.position_at_end(ifend)
 
+break_block_list = []
+con_block_list = []
+
 @aar.action("whileBlock", index = 0)
 def _whileBlock_prestore(while_, c0, sl):
     global block_no, builder_now
@@ -323,15 +326,23 @@ def _while(while_, c0, sl):
     builder_now.position_at_end(sl.block)
     builder_now.branch(while_.start_block)
 
-    builder_now.position_at_end(while_end)
+    for block in break_block_list:
+        if block.is_terminated:
+            block.replace(block.instructions[-1], builder_now.branch(while_end))
+        else:
+            builder_now.position_at_end(block)
+            builder_now.branch(while_end)
+    break_block_list.clear()
 
-# @aar.action("forBlock", index=0)
-# def _for_prestore(for_, init, expr0, stmtl, expr1):
-#     global block_no, builder_now
-#     block_no += 1
-#     new_blk = builder_now.append_basic_block()
-#     for_.start_block = new_blk
-#     builder_now.position_at_end(new_blk)
+    for block in con_block_list:
+        if block.is_terminated:
+            block.replace(block.instructions[-1], builder_now.branch(while_.start_block))
+        else:
+            builder_now.position_at_end(block)
+            builder_now.branch(while_.start_block)
+    con_block_list.clear()
+
+    builder_now.position_at_end(while_end)
 
 @aar.action("forexpr", index = 0) 
 def _forexpr_prestore(forexpr_, expr):
@@ -361,25 +372,47 @@ def _for(for_, init, expr0, stmtl, expr1):
         builder_now.position_at_end(expr1.block)
         builder_now.branch(expr0.block)
 
+    for block in break_block_list:
+        if block.is_terminated:
+            block.replace(block.instructions[-1], builder_now.branch(for_end))
+        else:
+            builder_now.position_at_end(block)
+            builder_now.branch(for_end)
+    break_block_list.clear()
+
+    for block in con_block_list:
+        if block.is_terminated:
+            block.replace(block.instructions[-1], builder_now.branch(expr0.block))
+        else:
+            builder_now.position_at_end(block)
+            builder_now.branch(expr0.block)
+    con_block_list.clear()
+
     builder_now.position_at_end(for_end)
 
-
-ast.evaluate(aar)
-print(module)
-
-exit()
-
-'''
 @aar.action("break")
 def _break(break_):
-    # TODO break的逻辑
-    break_.cb.addILOC("goto", (break_.bb, "next"))
+    global break_block_list, builder_now, block_no
+    break_block = builder_now.function.basic_blocks[block_no]
+    break_block_list.append(break_block)
+
+    block_no += 1
+    new_blk = builder_now.append_basic_block()
+    builder_now.position_at_end(new_blk)
 
 @aar.action("continue")
 def _continue(continue_):
-    # TODO continue的逻辑
-    continue_.cb.addILOC("goto", continue_.lb)
-'''
+    global con_block_list, builder_now, block_no
+    continue_block = builder_now.function.basic_blocks[block_no]
+    con_block_list.append(continue_block)
+
+    block_no += 1
+    new_blk = builder_now.append_basic_block()
+    builder_now.position_at_end(new_blk)
+
+ast.evaluate(aar)
+print(module)
+exit()
 
 @aar.action("defParam")
 def _defParam(defp, type_, id_):
