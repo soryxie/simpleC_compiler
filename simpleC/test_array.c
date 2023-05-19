@@ -1,7 +1,7 @@
 int binarySearch(int arr[10], int len, int val) {
     /**
      * given the array and the value, returns
-     * the index of the val, or -1 if not found
+     * true or false
      */
     int l, r;
     for (l = 0, r = len; l < r; ) {
@@ -12,7 +12,6 @@ int binarySearch(int arr[10], int len, int val) {
             r = mid;
         }
     }
-    // assert l == r;
     return (l == r);
 }
 
