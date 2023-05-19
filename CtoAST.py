@@ -160,9 +160,18 @@ def _e34(e2, e3, mul, e20):
 def _f00(f0, f00, assg, f1):
     f0.node = ASTNode("assign", f00.node, f1.node)
 
-@par.production("<e4> -> id [ <e0> ]")  
-def _f11(f1, id_, lob, f2, rob):
-    f1.node = ASTNode("getitem", ASTNode(id_.getContent(), actionID="id_var"), f2.node)
+@par.production("<e4> -> <数组元素>")  
+def _f11(f1, arrayelem):
+    f1.node = arrayelem.node
+
+@par.production("<数组元素> -> id [ <f0> ]")
+def _array_get0(array_, arrid_, lob, f2, rob):
+    array_.node = ASTNode("getitem", ASTNode(arrid_.getContent(), actionID="id_var"), f2.node, actionID="getitem")
+
+@par.production("<数组元素> -> <数组元素> [ <f0> ]")
+def _array_get1(array_, array_0, lob, f2, rob):
+    array_.node = array_0.node
+    array_.node.addChild(f2.node)
 
 @par.production("<e4> -> ( <f0> )")
 def _f20(e3, lp, f0, rp):
@@ -201,15 +210,20 @@ def _id0(id_, id_0):
 def _id1(id_, id_0, assg, c0):
     id_.node = ASTNode("assign", ASTNode(id_0.getContent(), actionID="id_var"), c0.node)
 
-@par.production("<变量> -> id [ int_const ]")    #------------------------ 类型待填入
-def _alloc0(id_, id_0, lo, int_const, ro):
-    id_.node = ASTNode("assign", ASTNode(id_0.getContent(), actionID="noAction"), \
-        ASTNode("newArr", ASTNode("int", actionID="type"), ASTNode(int_const.getContent(), actionID="noAction")))
+@par.production("<变量> -> <数组>")    
+def _array0(id_, array_):
+    id_.node = array_.node
 
-@par.production("<变量> -> id [ int_const ] = { <参数列表> }")    #------------------------ 类型待填入
-def _alloc1(id_, id_0, lo, int_const, ro , assg, lcb, pal, rcb):
-    id_.node = ASTNode("assign", ASTNode(id_0.getContent(), actionID="noAction"), \
-        ASTNode("newArr", ASTNode("int", actionID="type"), ASTNode(int_const.getContent(), actionID="noAction"), pal.node, actionID="noAction"))
+@par.production("<数组> -> id [ int_const ]")    
+def _array1(array_, id_, lob, int_const, rob):
+    array_.node = ASTNode(id_.getContent(), actionID="array")
+    array_.node.dim = [int_const.getContent()]
+
+@par.production("<数组> -> <数组> [ int_const ]")    
+def _array2(array_, array_0, lob, int_const, rob):
+    array_.node = array_0.node
+    array_.node.dim = array_0.dim
+    array_.node.dim.append(int_const.getContent())
 
 @par.production("<函数声明> -> <类型> id ( <参数定义表> ) { <语句串> }")
 def _funcdec0(funcDec, type_, id_, lp, defParamList, rp, lcb, stmtl, rcb):
@@ -243,6 +257,11 @@ def _defpl1(defpl, defp):
 @par.production("<参数定义> -> <类型> id")
 def _defp0(defp, type_, id_):
     defp.node = ASTNode("defParam", type_.node, ASTNode(id_.getContent(), actionID="id_func_var"))
+
+@par.production("<参数定义> -> <类型> <数组>")
+def _defp1(defp, type_, array_):
+    defp.node = ASTNode("defParam", type_.node, array_.node)
+
 
 @par.production("<while语句> -> while ( <c0> ) { <语句串> }")
 def _whileBlock0(wb, while_, lp, c0, rp, lcb, sl, rcb):

@@ -1,24 +1,15 @@
-from collections import deque
-from cfg import ContextFreeGrammar
-from typeDef import TypeDefinition
-from action import Action
-from goto import Goto
-from Ast import ASTNode, AbstractSyntaxTree, ASTActionRegister
-from parseTree import ParseTreeActionRegister
+from Ast import ASTActionRegister
 from CtoAST import create_AST
 from llvmlite import ir
-import scanner
-import Parser
 import sys
 
-ast = create_AST("simpleC/test_only_op.c")
+if len(sys.argv) < 3:
+    print("Usage: python3 ASTtoLLVM.py <C file> <output file>")
+    exit()
 
-funcbuilder = ASTActionRegister()
+# 创建AST
+ast = create_AST(sys.argv[1]) 
 
-'''
-按照这个逻辑，AST遍历也是按后序遍历处理，所以也是一个一个函数处理
-因此，可以使用builder_list 存放所有函数的builder ， 并用一个builder_no表示进行到第几个函数了
-'''
 # 全局module
 module = ir.Module()
 
@@ -28,7 +19,18 @@ builder_list = []
 # 局部变量表
 local_var = []
 
+
+# -----------------实现原理-------------------------
+# 通过对AST的节点进行两遍后序遍历的扫描  (AST.evaluate())
+# 根据不同AST节点的语义动作，完成不同的llvm ir 语句生成
+
+
+
 # ----------------------------第一遍扫描-----------------------------------
+# 创建注册器funcbuilder，这次扫描只做函数声明的工作
+# 好处是可以提前得到每个函数的llvm ir builder, 简化我们第二次扫描的工作
+funcbuilder = ASTActionRegister()
+
 def get_llvm_type(type_):
     if type_ == 'int':
         return ir.IntType(32)
@@ -42,16 +44,29 @@ def get_llvm_type(type_):
 
 @funcbuilder.action("funcDec")
 def _funcDecl(func, type_, func_id, defpl, sl):
-    # if 'module' not in func:
-    #     assert func.module is not None
     funcName = str(func_id.getContent())
     retType = get_llvm_type(type_.getContent())
     arg_types = []
     arg_names = []
     for arg in defpl.getChilds():
         attr = arg.getChilds()
-        arg_types.append(get_llvm_type(attr[0].getContent()))
-        arg_names.append(attr[1].getContent())
+        type = get_llvm_type(attr[0].getContent())
+        arg_name = attr[1].getContent()
+        if 'dim' in attr[1]:        # 是数组
+            dims = attr[1].dim
+            tmp_type = []
+            for array_dim in dims:
+                array_dim = int(array_dim)
+                if len(tmp_type) == 0:
+                    type_arr = ir.ArrayType(type, array_dim)
+                else:
+                    type_arr = ir.ArrayType(tmp_type[-1], array_dim)
+                tmp_type.append(type_arr)
+            type = tmp_type[-1].as_pointer() # 最终是这个对应类型的指针
+        else :                      # 不是数组
+            pass
+        arg_types.append(type)
+        arg_names.append(arg_name)
 
     # 声明完毕，开始定义函数
     funcType = ir.FunctionType(retType, tuple(arg_types))
@@ -61,7 +76,7 @@ def _funcDecl(func, type_, func_id, defpl, sl):
     for arg in func.llvm_func.args:     # 函数参数绑定名称
         arg.name = arg_names.pop(0)
 
-    primary_block = func.llvm_func.append_basic_block()
+    primary_block = func.llvm_func.append_basic_block(funcName+'primary')
     builder = ir.IRBuilder(primary_block)
     global builder_list
     builder_list.append(builder)        # 导入Budiler列表           
@@ -73,48 +88,80 @@ def _funcDecl(func, type_, func_id, defpl, sl):
 ast.evaluate(funcbuilder)
 
 # ----------------------------第二遍扫描-----------------------------------
+# 几个关键的概念，关于如何生成llvmlite库所定义的语句(基本与llvm ir一致)
+# module 文件概念，其中包含着全局变量，全局函数的声明和定义
+# function 函数概念，其中包含着多个block，函数参数，函数返回值
+# block 基本块，是一条主干语句的集合，每个基本块都有一个唯一的入口和出口
+# builder 基本块的构造器，本程序默认一个函数拥有一个Builder，他可以指向function中的任意block的任意位置，并生成新的代码
+# 诸如 builder_now.load() builder_now.add() builder_now.branch() ...
 
-# func_block定位
+
+# 一些全局数据，在不同的注册函数间共享信息
+
+# func和block定位
 func_no = 0
 block_no = 0
 
 # builder_now 表示当前处理的第一个函数的builder，后序不断更新
 builder_now = builder_list[0]
 
+
+# 第二遍扫描的注册器
+# 这一遍包含了所有语句的生成，block的跳转，变量声明，函数调用
+# 理解它们的实现原理，可以关注装饰器的信号量，以及对应的AST节点的语义动作
+
 aar = ASTActionRegister()
+
+def append_block(name: str):
+    global builder_now, block_no
+    if len(builder_now.block.instructions) == 0:
+        return
+    name = module.get_unique_name(name)
+    new_blk = builder_now.append_basic_block(name)
+    block_no += 1
+    builder_now.position_at_start(new_blk)
+    return new_blk
+
 
 @aar.action("varDec")
 def _varDec(varDec, type_, idList):
-    global builder_now, block_no
-    # 相当于一条主干语句的结束，切换到一个新的block
-    new_blk = builder_now.append_basic_block()
-    block_no += 1
-    builder_now.position_at_start(new_blk)
-
+    global builder_now
+    append_block('var')
+    type = get_llvm_type(type_.getContent())
     for node in idList.getChilds():
         if node.getContent() == 'assign':
             var_name = node.getChilds()[0].getContent()
-            variable = builder_now.alloca(get_llvm_type(type_.getContent()), var_name)
+            variable = builder_now.alloca(type, name=var_name)
             builder_now.store(node.getChilds()[1].value, variable)
-            local_var[func_no][var_name] = builder_now.load(variable)   # 可运算的类型 - load
-        else:
+            local_var[func_no][var_name] = builder_now.load(variable)   
+        elif node.__actionID == 'id_var':
             var_name = node.getContent()
-            variable = builder_now.alloca(get_llvm_type(type_.getContent()), var_name)
-            local_var[func_no][var_name] = builder_now.load(variable)   # 可运算的类型 - load
+            variable = builder_now.alloca(type, name=var_name)
+            local_var[func_no][var_name] = builder_now.load(variable) 
+        elif node.__actionID == 'array':
+            array_name = node.getContent()
+            tmp_type = []
+            for array_dim in node.dim:
+                array_dim = int(array_dim)
+                if len(tmp_type) == 0:
+                    type_arr = ir.ArrayType(type, array_dim)
+                else:
+                    type_arr = ir.ArrayType(tmp_type[-1], array_dim)
+                tmp_type.append(type_arr)
+            variable = builder_now.alloca(tmp_type[-1], name=array_name)
+            local_var[func_no][array_name] = variable # 这里不保存load格式，因为对数组元素来说，要先移动指针才能Load
+                                                      # 移动指针(gep)需要直接的alloca返回的对象类型
 
 @aar.action("assign")
 def _assign_begin(assg, l, r):
     if 'value' in l:
         if isinstance(l.value, ir.LoadInstr):# l.value is None:
-            builder_now.store(r.value, l.value.operands[0])
+            builder_now.store(r.value, l.value.operands[0], align=4)
         else:
             builder_now.store(r.value, l.value)
         assg.value = l.value
     else:
-        print("l.value not found, wait for defination")
-    # assg.cb.addILOC("mov", "ebx", r.var.getOP())
-    # assg.cb.addILOC("mov", l.var.getOP(), "ebx")
-    # assg.var = l.var
+        print("%s的赋值推后到声明时完成" % l.getContent())
 
 @aar.action("id_var")
 def _id_var(id_):
@@ -138,7 +185,7 @@ def _id_var(id_):
             return
     
     # 未找到，不做处理
-    print("var %s not found, can't get value" % name)
+    print("没有找到变量：%s，将在本语句声明" % name)
 
 @aar.action("const")
 def _const(const):
@@ -259,25 +306,31 @@ def _funcDecl(func, type_, func_id, defpl, sl):
     block_no = 0
     if func_no < len(builder_list):
         builder_now = builder_list[func_no]
-    else:
-        print('the last func')
 
 @aar.action("stmtList", index=0)
 def _stmtl(stmtl, *rest):
     # 仅仅作为block的切换函数
-    global block_no, builder_now
-    block_no += 1
-    new_blk = builder_now.append_basic_block()
-    stmtl.block = builder_now.function.basic_blocks[block_no]
-    builder_now.position_at_end(new_blk)
+    stmtl.block = append_block('stmt')
 
 @aar.action("ifBlock", index = 0)
 def _ifBlock_prestore(ifb, *childs):
-    global block_no, builder_now
-    block_no += 1
-    new_blk = builder_now.append_basic_block()
-    ifb.start_block = new_blk
-    builder_now.position_at_end(new_blk)
+    ifb.start_block = append_block('if')
+
+break_block_list = []
+con_block_list = []
+
+def try_branch_block_to(block, dst):
+    global builder_now
+    if block.is_terminated:
+        if block not in break_block_list and \
+            block not in con_block_list: # TODO return block
+            builder_now.position_at_end(block)
+            print(block.instructions[-1])
+            block.replace(block.instructions[-1], builder_now.branch(dst))
+        return
+    else:
+        builder_now.position_at_end(block)
+        builder_now.branch(dst)
 
 @aar.action("ifBlock")
 def _ifBlock(ifb, *childs):
@@ -291,12 +344,9 @@ def _ifBlock(ifb, *childs):
     if len(childs) == 2:
         builder_now.cbranch(childs[0].value, childs[1].block, ifend)
     elif len(childs) == 3:
-        print(module)
         builder_now.cbranch(childs[0].value, childs[1].block, childs[2].block)
-        builder_now.position_at_end(childs[1].block)
-        builder_now.branch(ifend)
-        builder_now.position_at_end(childs[2].block)
-        builder_now.branch(ifend)
+        try_branch_block_to(childs[1].block, ifend)
+        try_branch_block_to(childs[2].block, ifend)
     else:
         assert False # TODO not implement
         for i in range(0, len(childs), 2):
@@ -306,16 +356,11 @@ def _ifBlock(ifb, *childs):
             builder_now.branch(ifend)
     builder_now.position_at_end(ifend)
 
-break_block_list = []
-con_block_list = []
+
 
 @aar.action("whileBlock", index = 0)
 def _whileBlock_prestore(while_, c0, sl):
-    global block_no, builder_now
-    block_no += 1
-    new_blk = builder_now.append_basic_block()
-    while_.start_block = new_blk
-    builder_now.position_at_end(new_blk)
+    while_.start_block = append_block('while')
 
 @aar.action("whileBlock")
 def _while(while_, c0, sl):
@@ -347,11 +392,7 @@ def _while(while_, c0, sl):
 
 @aar.action("forexpr", index = 0) 
 def _forexpr_prestore(forexpr_, expr):
-    global block_no, builder_now
-    block_no += 1
-    new_blk = builder_now.append_basic_block()
-    forexpr_.block = new_blk
-    builder_now.position_at_end(new_blk)
+    forexpr_.block = append_block('forexpr')
    
 @aar.action("forexpr") 
 def _forexpr(forexpr_, expr):
@@ -393,13 +434,11 @@ def _for(for_, init, expr0, stmtl, expr1):
 
 @aar.action("break")
 def _break(break_):
-    global break_block_list, builder_now, block_no
+    global break_block_list, builder_now
     break_block = builder_now.function.basic_blocks[block_no]
     break_block_list.append(break_block)
 
-    block_no += 1
-    new_blk = builder_now.append_basic_block()
-    builder_now.position_at_end(new_blk)
+    append_block('brea_n')
 
 @aar.action("continue")
 def _continue(continue_):
@@ -407,15 +446,16 @@ def _continue(continue_):
     continue_block = builder_now.function.basic_blocks[block_no]
     con_block_list.append(continue_block)
 
-    block_no += 1
-    new_blk = builder_now.append_basic_block()
-    builder_now.position_at_end(new_blk)
+    append_block('con_n')
 
 @aar.action("return")
 def _return(return_, c0):
     # TODO return;
+    # TODO conflicts with if_branch, for_branch, while_branch
     global builder_now
-    builder_now.ret(c0.value)
+    type = builder_now.function.ftype.return_type
+    funcName = builder_now.function.name
+    builder_now.ret(builder_now.zext(c0.value, type))
 
 @aar.action("parameterList")
 def _pml(pml, *childs):
@@ -431,6 +471,30 @@ def _funcCall(funcCall, funcName, paramList):
     print('no function %s' % name)
     assert False
 
+@aar.action("getitem")
+def _getitem(getitem, array_, *childs):
+    array = array_.value
+    dims = [ir.Constant(ir.IntType(32), 0)]
+    for dim_node in childs:
+        if isinstance(dim_node, ir.Constant):
+            dims.append(dim_node)
+        else:
+            dims.append(dim_node.value)
 
+    global builder_now
+    ptr = builder_now.gep(array, dims, name='ptr_' + array_.getContent())
+    getitem.value = builder_now.load(ptr, name='', align=4)
+    
 ast.evaluate(aar)
-print(module)
+
+def check_block_endding():
+    for builder in builder_list:
+        for i, block in enumerate(builder.function.blocks):
+            if not block.is_terminated:
+                builder.position_at_end(block)
+                builder.branch(builder.function.blocks[i+1])
+
+check_block_endding()
+
+with open(sys.argv[2], 'w') as f:
+    f.write(str(module))
