@@ -14,11 +14,7 @@ int binarySearch(int arr, int len, int val) {
         }
     }
     // assert l == r;
-    if (arr == val) {
-        return l;
-    } else {
-        return -1;
-    }
+    return (l==r);
 }
 
 int main() {

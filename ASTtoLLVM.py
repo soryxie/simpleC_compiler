@@ -291,6 +291,7 @@ def _ifBlock(ifb, *childs):
     if len(childs) == 2:
         builder_now.cbranch(childs[0].value, childs[1].block, ifend)
     elif len(childs) == 3:
+        print(module)
         builder_now.cbranch(childs[0].value, childs[1].block, childs[2].block)
         builder_now.position_at_end(childs[1].block)
         builder_now.branch(ifend)
@@ -410,95 +411,26 @@ def _continue(continue_):
     new_blk = builder_now.append_basic_block()
     builder_now.position_at_end(new_blk)
 
-ast.evaluate(aar)
-print(module)
-exit()
-
-@aar.action("defParam")
-def _defParam(defp, type_, id_):
-    # TODO 函数参数定义
-    varName = "__v_%d_%d_%s" % (id_.ns[0], id_.ns[1], id_.getContent())
-    if type_.getContent()[0].islower():
-        defp.var = Variable(varName, type_.getContent(), defp.ns)
-
-@aar.action("defParamList")
-def _defParamList(defpl, *defps):
-    defpl.list = [_.var for _ in defps]
-
-@aar.action("funcDec", index=0)
-# TODO 函数定义
-def _funcDec_0(func, type_, func_id, defpl, sl):
-    defpl.ns = sl.ns
-    defpl.run(updateNS)
-
-@aar.action("funcDec", index=3)
-def _funcDec_3(func, type_, func_id, defpl, sl):
-    offset = 4  # return address need 4 bytes
-    for var in defpl.list:
-        sl.cb.addILOC("mov", "ebx", "[esp + %d]" % offset)
-        sl.cb.addILOC("mov", var.getOP(), "ebx")
-        offset += var.size
-
-@aar.action("funcDec")
-def _funcDec(func, type_, func_id, defpl, sl):
-    funcName = str(func_id.getContent())
-    declaredFunctions[funcName] = \
-        Function(
-            str(type_.getContent()),
-            funcName,
-            defpl.list,
-            sl.cb
-        )
-
-
-builtinFunctions = {}
-
-def builtin(functionName):
-    def decorate(function):
-        builtinFunctions[functionName] = function
-        return function
-    return decorate
-
 @aar.action("return")
 def _return(return_, c0):
-    # TODO return 逻辑
-    return_.cb.addILOC("mov", "eax", c0.var.getOP())
-    return_.cb.addILOC("ret")
-
-def match(var1, var2):
-    return var1.type == var2.type
+    # TODO return;
+    global builder_now
+    builder_now.ret(c0.value)
 
 @aar.action("parameterList")
 def _pml(pml, *childs):
-    # TODO 函数调用参数列表
-    pml.list = [_.var for _ in childs]
+    pml.list = [_.value for _ in childs]
 
 @aar.action("functionCall")
 def _funcCall(funcCall, funcName, paramList):
-    # TODO 函数调用
-    if str(funcName) in builtinFunctions:
-        builtinFunctions[str(funcName)](paramList)
-    else:
-        func = declaredFunctions[str(funcName)]
-        if len(paramList.getChilds()) != len(func.parameters):
-            print("[ERROR] Function call: Parameter number don't match.")
-            exit()
-        funcCall.cb.addILOC("push", "eax")
-        funcCall.cb.addILOC("push", "ebx")
-        totSize = 0
-        for i in range(len(func.parameters) - 1, -1, -1):
-            if not match(func.parameters[i], paramList.list[i]):
-                print("[ERROR] Function call: Parameter %d don't match." % i)
-                exit()
-            var = paramList.list[i]
-            funcCall.cb.addILOC("push", var.getOP())
-            totSize += var.size
-        funcCall.cb.addILOC("call", func.sl.name)
-        funcCall.cb.addILOC("add", "esp", str(totSize))
-        funcCall.var = Variable(getTempVarName(), func.returnType, funcCall.ns)
-        funcCall.cb.addILOC("mov", funcCall.var.getOP(), "eax")
-        funcCall.cb.addILOC("pop", "ebx")
-        funcCall.cb.addILOC("pop", "eax")
+    name = funcName.getContent()
+    for func in module.functions:
+        if func.name == name:
+            funcCall.value = builder_now.call(func, paramList.list)
+            return
+    print('no function %s' % name)
+    assert False
 
 
 ast.evaluate(aar)
+print(module)
