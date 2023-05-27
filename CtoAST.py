@@ -313,9 +313,9 @@ def _forblock0(forBlock, for_, lp, forinit, semi0, forexpr0, semi1, forexpr1, rp
     forBlock.node = ASTNode(
         "forBlock",
         forinit.node,
+        forexpr1.node,
         forexpr0.node,
-        stmtl.node,
-        forexpr1.node
+        stmtl.node
     )
 
 @par.production("<返回语句> -> return <c0> ;")

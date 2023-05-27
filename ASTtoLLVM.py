@@ -19,6 +19,12 @@ builder_list = []
 # 局部变量表
 local_var = []
 
+class varelem:
+    def __init__(self):
+        self.ptr = None
+        self.load = None
+        self.array = False
+
 
 # -----------------实现原理-------------------------
 # 通过对AST的节点进行两遍后序遍历的扫描  (AST.evaluate())
@@ -122,24 +128,23 @@ def append_block(name: str):
     builder_now.position_at_start(new_blk)
     return new_blk
 
-
 @aar.action("varDec")
 def _varDec(varDec, type_, idList):
     global builder_now
     append_block('var')
     type = get_llvm_type(type_.getContent())
+    vname = ''
+    var = None
     for node in idList.getChilds():
         if node.getContent() == 'assign':
-            var_name = node.getChilds()[0].getContent()
-            variable = builder_now.alloca(type, name=var_name)
-            builder_now.store(node.getChilds()[1].value, variable)
-            local_var[func_no][var_name] = builder_now.load(variable)   
+            vname = node.getChilds()[0].getContent()
+            var = builder_now.alloca(type, name=vname)
+            builder_now.store(node.getChilds()[1].value, var)
         elif node.__actionID == 'id_var':
-            var_name = node.getContent()
-            variable = builder_now.alloca(type, name=var_name)
-            local_var[func_no][var_name] = builder_now.load(variable) 
+            vname = node.getContent()  
+            var = builder_now.alloca(type, name=vname)
         elif node.__actionID == 'array':
-            array_name = node.getContent()
+            vname = node.getContent()
             tmp_type = []
             for array_dim in node.dim:
                 array_dim = int(array_dim)
@@ -148,19 +153,22 @@ def _varDec(varDec, type_, idList):
                 else:
                     type_arr = ir.ArrayType(tmp_type[-1], array_dim)
                 tmp_type.append(type_arr)
-            variable = builder_now.alloca(tmp_type[-1], name=array_name)
-            variable.flags.append('array')
-            local_var[func_no][array_name] = variable # 这里不保存load格式，因为对数组元素来说，要先移动指针才能Load
-                                                      # 移动指针(gep)需要直接的alloca返回的对象类型
+            var = builder_now.alloca(tmp_type[-1], name=vname)
+
+        if vname not in local_var[func_no]:
+            local_var[func_no][vname] = varelem()
+        if node.__actionID == 'array':
+            local_var[func_no][vname].array = True
+        local_var[func_no][vname].ptr = var
 
 @aar.action("assign")
 def _assign_begin(assg, l, r):
     if 'value' in l:
         if l.__actionID == 'id_var':
-            l.value = local_var[func_no][l.getContent()]
-            builder_now.store(r.value, l.value.operands[0], align=4)
-            local_var[func_no][l.getContent()] = builder_now.load(l.value.operands[0])
-            l.value = local_var[func_no][l.getContent()]
+            ptr = local_var[func_no][l.getContent()].ptr
+            builder_now.store(r.value, ptr, align=4)
+            local_var[func_no][l.getContent()].load = None
+            l.value = ptr
         elif isinstance(l.value, ir.LoadInstr):
             builder_now.store(r.value, l.value.operands[0], align=4)
         else:
@@ -183,7 +191,13 @@ def _id_var(id_):
 
     # 在局部变量表中查找
     if name in local_var[func_no]:
-        id_.value = local_var[func_no][name]
+        if local_var[func_no][name].array:
+            id_.value = local_var[func_no][name].ptr
+            return
+        if local_var[func_no][name].load == None:
+            ptr = local_var[func_no][name].ptr
+            local_var[func_no][name].load = builder_now.load(ptr, name=name)
+        id_.value = local_var[func_no][name].load
         return
     
     # 在函数的args中查找
@@ -236,7 +250,6 @@ def _mod(mod, l, r):
 @aar.action("splus")
 def _sp(sp, l):
     l.value = builder_now.add(l.value, ir.Constant(l.value.type, 1))
-    # local_var[func_no][l.getContent()] = l.value
     sp.value = l.value
     
 @aar.action("sminus")
@@ -338,8 +351,6 @@ def _ifBlock(ifb, *childs):
             builder_now.branch(ifend)
     builder_now.position_at_end(ifend)
 
-
-
 @aar.action("whileBlock", index = 0)
 def _whileBlock_prestore(while_, c0, sl):
     while_.start_block = append_block('while')
@@ -379,10 +390,13 @@ def _forexpr_prestore(forexpr_, expr):
 @aar.action("forexpr") 
 def _forexpr(forexpr_, expr):
     if 'value' in expr:
+        if expr.__actionID == 'assign':
+            name = expr.getChilds()[0].getContent()
+            local_var[func_no][name].load = None
         forexpr_.value = expr.value
 
 @aar.action("forBlock")
-def _for(for_, init, expr0, stmtl, expr1):
+def _for(for_, init, expr1, expr0, stmtl):
     global block_no
     block_no += 1
     for_end = builder_now.append_basic_block('for_end_' + stmtl.block.name)
@@ -465,7 +479,7 @@ def _getitem(getitem, array_, *childs):
 
     global builder_now
     ptr = builder_now.gep(array, dims, name='ptr_' + array_.getContent())
-    getitem.value = builder_now.load(ptr, name='', align=4)
+    getitem.value = builder_now.load(ptr, name=array.name, align=4)
     
 ast.evaluate(aar)
 

@@ -12,7 +12,7 @@ int binarySearch(int arr[10], int len, int val) {
             r = mid;
         }
     }
-    return (l == r);
+    return (arr[l] == val);
 }
 
 int main() {
