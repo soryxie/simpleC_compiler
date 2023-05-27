@@ -5,3 +5,5 @@ in
 simpleC/*.py
 example
 *.ll
+*.asm
+*.s
