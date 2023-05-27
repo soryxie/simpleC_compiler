@@ -17,6 +17,21 @@
 ✅ if else-if else 
 
 ## Outcomes
+'''c
+/* TEST CODE */
+int binarySearch(int arr[10], int len, int val) {
+    int l, r;
+    for (l = 0, r = len; l < r; ) {
+        int mid = l + (r - l) / 2;
+        if (arr[mid] < val) {
+            l = mid + 1;
+        } else {
+            r = mid;
+        }
+    }
+    return (arr[l] == val);
+}
+'''
 
 > <img src="./simpleC/example.png" />
 > C code <-> LLVM IR code
