@@ -109,12 +109,14 @@ def _c35(c3, c30, eq, c4):
     c3.node = ASTNode("ne", c30.node, c4.node)
 
 @par.production("<e3> -> ++ <e4>")
-def _e00(e0, sp, e1):
-    e0.node = ASTNode("splus", e1.node)  # self plus
+def _e00(e3, sp, e4):
+    tmp = ASTNode("splus", e4.node)          # +1
+    e3.node = ASTNode("assign", e4.node, tmp)# =
 
 @par.production("<e3> -> -- <e4>")
-def _e01(e0, sm, e1):
-    e0.node = ASTNode("sminus", e1.node)  # self minus
+def _e01(e3, sm, e4):
+    tmp = ASTNode("sminus", e4.node)         # -1
+    e3.node = ASTNode("assign", e4.node, tmp)# =
 
 @par.production("<e0> -> <e0> + <e1>")
 def _e10(e1, e10, plus, e2):
@@ -125,36 +127,41 @@ def _e11(e1, e10, minus, e2):
     e1.node = ASTNode("sub", e10.node, e2.node)
 
 @par.production("<f0> -> <c0> += <f0>")
-def _e30(e1, e2, iplus, e10):
-    e1.node = ASTNode("iadd", e2.node, e10.node)
+def _e30(f0, c0, iplus, f00):
+    tmp = ASTNode("add", c0.node, f00.node) # +
+    f0.node = ASTNode("assign", c0.node, tmp)# =
 
 @par.production("<f0> -> <c0> -= <f0>")
-def _e31(e1, e2, iminus, e10):
-    e1.node = ASTNode("isub", e2.node, e10.node)
+def _e31(f0, c0, iminus, f00):
+    tmp = ASTNode("sub", c0.node, f00.node) # -
+    f0.node = ASTNode("assign", c0.node, tmp)# =
 
 @par.production("<e1> -> <e1> * <e2>")
 def _e20(e2, e20, mul, e3):
     e2.node = ASTNode("mul", e20.node, e3.node)
 
 @par.production("<e1> -> <e1> / <e2>")
-def _e21(e2, e20, mul, e3):
+def _e21(e2, e20, div, e3):
     e2.node = ASTNode("div", e20.node, e3.node)
 
 @par.production("<f0> -> <c0> *= <f0>")
-def _e32(e2, e3, mul, e20):
-    e2.node = ASTNode("imul", e3.node, e20.node)
+def _e32(f0, c0, imul, f00):
+    tmp = ASTNode("mul", c0.node, f00.node)   # *
+    f0.node = ASTNode("assign", c0.node, tmp) # =
 
 @par.production("<f0> -> <c0> /= <f0>")
-def _e33(e2, e3, mul, e20):
-    e2.node = ASTNode("idiv", e3.node, e20.node)
+def _e33(f0, c0, idiv, f00):
+    tmp = ASTNode("div", c0.node, f00.node)   # /
+    f0.node = ASTNode("assign", c0.node, tmp) # =
 
 @par.production("<e1> -> <e1> % <e2>")
 def _e22(e2, e20, mod, e3):
     e2.node = ASTNode("mod", e20.node, e3.node)
 
 @par.production("<f0> -> <c0> %= <f0>")
-def _e34(e2, e3, mul, e20):
-    e2.node = ASTNode("imod", e3.node, e20.node)
+def _e34(f0, c0, imod, f00):
+    tmp = ASTNode("mod", c0.node, f00.node)   # %
+    f0.node = ASTNode("assign", c0.node, tmp) # =
 
 @par.production("<f0> -> <c0> = <f0>")
 def _f00(f0, f00, assg, f1):

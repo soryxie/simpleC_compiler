@@ -149,22 +149,30 @@ def _varDec(varDec, type_, idList):
                     type_arr = ir.ArrayType(tmp_type[-1], array_dim)
                 tmp_type.append(type_arr)
             variable = builder_now.alloca(tmp_type[-1], name=array_name)
+            variable.flags.append('array')
             local_var[func_no][array_name] = variable # 这里不保存load格式，因为对数组元素来说，要先移动指针才能Load
                                                       # 移动指针(gep)需要直接的alloca返回的对象类型
 
 @aar.action("assign")
 def _assign_begin(assg, l, r):
     if 'value' in l:
-        if isinstance(l.value, ir.LoadInstr):# l.value is None:
+        if l.__actionID == 'id_var':
+            l.value = local_var[func_no][l.getContent()]
+            builder_now.store(r.value, l.value.operands[0], align=4)
+            local_var[func_no][l.getContent()] = builder_now.load(l.value.operands[0])
+            l.value = local_var[func_no][l.getContent()]
+        elif isinstance(l.value, ir.LoadInstr):
             builder_now.store(r.value, l.value.operands[0], align=4)
         else:
             builder_now.store(r.value, l.value)
+
         assg.value = l.value
     else:
         print("%s的赋值推后到声明时完成" % l.getContent())
 
 @aar.action("id_var")
 def _id_var(id_):
+    global builder_now
     name = id_.getContent()
 
     # 在全局变量表中查找
@@ -228,39 +236,13 @@ def _mod(mod, l, r):
 @aar.action("splus")
 def _sp(sp, l):
     l.value = builder_now.add(l.value, ir.Constant(l.value.type, 1))
+    # local_var[func_no][l.getContent()] = l.value
     sp.value = l.value
     
 @aar.action("sminus")
 def _sm(sm, l):
     l.value = builder_now.sub(l.value, ir.Constant(l.value.type, 1))
     sm.value = l.value
-
-@aar.action("iadd")
-def _iadd(iadd, l, r):
-    l.value = builder_now.add(l.value, r.value)
-    iadd.value = l.value
-
-@aar.action("isub")
-def _isub(isub, l, r):
-    l.value = builder_now.sub(l.value, r.value)
-    isub.value = l.value
-
-@aar.action("imul")
-def _imul(imul, l, r):
-    l.value = builder_now.mul(l.value, r.value)
-    imul.value = l.value
-
-@aar.action("idiv")
-def _idiv(idiv, l, r):
-    # TODO assert r.value != 0
-    l.value = builder_now.sdiv(l.value, r.value)
-    idiv.value = l.value
-
-@aar.action("imod")
-def _imod(imod, l, r):
-    # TODO assert r.value != 0
-    l.value = builder_now.srem(l.value, r.value)
-    imod.value = l.value
 
 @aar.action("eq")
 def _eq(eq, l, r):
