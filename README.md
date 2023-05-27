@@ -17,8 +17,9 @@
 ✅ if else-if else 
 
 ## Outcomes
-'''c
-/* TEST CODE */
+
+```c
+/* TEST CODE : array, expr, for, if ...*/
 int binarySearch(int arr[10], int len, int val) {
     int l, r;
     for (l = 0, r = len; l < r; ) {
@@ -31,7 +32,7 @@ int binarySearch(int arr[10], int len, int val) {
     }
     return (arr[l] == val);
 }
-'''
+```
 
 > <img src="./simpleC/example.png" />
 > C code <-> LLVM IR code
